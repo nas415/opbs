@@ -19,7 +19,7 @@ export async function execute(interactionOrMessage, client) {
   }
 
   if (bal.resetTokens <= 0) {
-    const reply = "You don't have any reset tokens.\nYou can get them from events or the shop (coming soon).";
+    const reply = "You don't have any reset tokens.\nYou can get them from events or the shop.";
     if (isInteraction) return interactionOrMessage.reply({ content: reply, ephemeral: true });
     return channel.send(reply);
   }

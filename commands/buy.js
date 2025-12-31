@@ -132,7 +132,9 @@ export async function execute(interactionOrMessage) {
       await bal2.save();
     } else {
       // Use case-insensitive item storage to avoid duplicates
-      const items = inv.items instanceof Map ? inv.items : new Map(Object.entries(inv.items || {}));
+      // Prefer using the existing Mongoose Map-like API if available, otherwise build a JS Map
+      const hasMapApi = inv.items && typeof inv.items.get === 'function' && typeof inv.items.set === 'function';
+      const items = hasMapApi ? inv.items : new Map(Object.entries(inv.items || {}));
       const storageKey = key;
       
       // Find existing key case-insensitively to avoid duplicates
@@ -154,13 +156,21 @@ export async function execute(interactionOrMessage) {
       }
       
       const useKey = foundKey || storageKey;
-      const prev = Number(items.get ? items.get(useKey) : items[useKey] || 0);
-      if (items.set) {
-        items.set(useKey, prev + amount);
+      // Read existing value (supports MongooseMap or plain object/Map)
+      const raw = (hasMapApi ? items.get(useKey) : (items.get ? items.get(useKey) : items[useKey]));
+      let prev = Number(raw);
+      if (!Number.isFinite(prev)) prev = 0;
+      const next = prev + Number(amount || 0);
+      if (hasMapApi) {
+        items.set(useKey, next);
+        inv.items = items;
+      } else if (items instanceof Map) {
+        items.set(useKey, next);
+        inv.items = items;
       } else {
-        items[useKey] = prev + amount;
+        items[useKey] = next;
+        inv.items = items;
       }
-      inv.items = items;
     }
   }
 
