@@ -1,5 +1,13 @@
 console.log("🔥 BOT.JS VERSION: CLEAN_LOGIN_V1");
 
+// Prevent accidental direct execution of this legacy startup file.
+// Use `index.js` as the single startup entry. To run this file directly
+// set `ALLOW_LEGACY_BOT_FILE=true` in the environment.
+if (process.env.ALLOW_LEGACY_BOT_FILE !== 'true') {
+  console.log('bot.js is disabled by default; run `index.js` instead.');
+  process.exit(0);
+}
+
 import { Client, GatewayIntentBits, Collection } from "discord.js";
 import { config } from "dotenv";
 import { connectDB } from "./config/database.js";
