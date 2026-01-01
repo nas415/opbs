@@ -1,4 +1,4 @@
-import mongoose from "mongoose";
+import mongoose from "../lib/mongoose-shim.js";
 
 const QuestSchema = new mongoose.Schema({
   type: { type: String, enum: ["daily", "weekly"], required: true },

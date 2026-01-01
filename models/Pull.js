@@ -1,4 +1,4 @@
-import mongoose from "mongoose";
+import mongoose from "../lib/mongoose-shim.js";
 
 const PullSchema = new mongoose.Schema({
   userId: { type: String, required: true, unique: true },

@@ -1,4 +1,4 @@
-import mongoose from "mongoose";
+import mongoose from "../lib/mongoose-shim.js";
 
 const CardEntrySchema = new mongoose.Schema({
   cardId: { type: String },
