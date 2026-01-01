@@ -4,7 +4,7 @@ import { generateBoostForRank } from "../lib/boosts.js";
 import Pull from "../models/Pull.js";
 import Balance from "../models/Balance.js";
 import Progress from "../models/Progress.js";
-const WINDOW_MS = 8 * 60 * 60 * 1000; // 8 hours
+const WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
 const MAX_PULLS = 7;
 
 const RANK_XP = {
@@ -27,9 +27,16 @@ function formatTime(ms) {
   return `${h}h ${m}m ${sec}s`;
 }
 
-export const data = new SlashCommandBuilder().setName("pull").setDescription("Pull a card (7 pulls per 8h reset)");
+export const data = new SlashCommandBuilder().setName("pull").setDescription("Pull a card (7 pulls per 24h reset)");
 
 export async function execute(interactionOrMessage, client) {
+  // Drop old index if it exists
+  try {
+    await Pull.collection.dropIndex('userId_1');
+  } catch (e) {
+    // Index doesn't exist or already dropped
+  }
+
   // determine if this is an interaction or a message
   const isInteraction = typeof interactionOrMessage.isCommand === "function" || typeof interactionOrMessage.isChatInputCommand === "function";
   const user = isInteraction ? interactionOrMessage.user : interactionOrMessage.author;
@@ -45,19 +52,26 @@ export async function execute(interactionOrMessage, client) {
 
   const currentWindow = Math.floor(Date.now() / WINDOW_MS);
 
-  // load or initialize Pull document for this user
-  let pullDoc = await Pull.findOne({ userId });
-  if (!pullDoc || pullDoc.window !== currentWindow) {
-    // start a new window
-    pullDoc = await Pull.findOneAndUpdate(
-      { userId },
-      { userId, window: currentWindow, used: 0 },
-      { upsert: true, new: true }
-    );
+  // Ensure pull document exists for current window
+  let pullDoc = await Pull.findOne({ userId, window: currentWindow });
+  if (!pullDoc) {
+    try {
+      pullDoc = new Pull({ userId, window: currentWindow, used: 0, totalPulls: 0 });
+      await pullDoc.save();
+    } catch (e) {
+      if (e.code === 11000) {
+        // Duplicate key, likely old index conflict, try to find existing
+        pullDoc = await Pull.findOne({ userId, window: currentWindow });
+        if (!pullDoc) throw e;
+      } else {
+        throw e;
+      }
+    }
   }
 
+  // Check limit before increment
   if (pullDoc.used >= MAX_PULLS) {
-    const nextReset = (pullDoc.window + 1) * WINDOW_MS;
+    const nextReset = (currentWindow + 1) * WINDOW_MS;
     const timeLeft = nextReset - Date.now();
     const reply = `You've used all ${MAX_PULLS} pulls. Next reset in \`${formatTime(timeLeft)}\`.`;
     if (isInteraction) {
@@ -68,16 +82,42 @@ export async function execute(interactionOrMessage, client) {
     return;
   }
 
-  // consume one pull (respecting existing window) and increment total pulls for pity
-  if (pullDoc.window !== currentWindow) {
-    pullDoc.window = currentWindow;
-    pullDoc.used = 1;
-    pullDoc.totalPulls = (pullDoc.totalPulls || 0) + 1;
-  } else {
-    pullDoc.used += 1;
-    pullDoc.totalPulls = (pullDoc.totalPulls || 0) + 1;
+  // Atomic increment with concurrency check
+  const updatedDoc = await Pull.findOneAndUpdate(
+    { userId, window: currentWindow, used: pullDoc.used },
+    { $inc: { used: 1, totalPulls: 1 } },
+    { new: true }
+  );
+
+  if (!updatedDoc) {
+    // Concurrent modification detected
+    const reply = "Pull failed due to concurrent request. Please try again.";
+    if (isInteraction) {
+      await interactionOrMessage.reply({ content: reply, ephemeral: true });
+    } else {
+      await channel.send(reply);
+    }
+    return;
   }
-  await pullDoc.save();
+
+  pullDoc = updatedDoc;
+
+  // If somehow exceeded (race condition), revert
+  if (pullDoc.used > MAX_PULLS) {
+    await Pull.findOneAndUpdate(
+      { userId, window: currentWindow },
+      { $inc: { used: -1, totalPulls: -1 } }
+    );
+    const nextReset = (currentWindow + 1) * WINDOW_MS;
+    const timeLeft = nextReset - Date.now();
+    const reply = `You've used all ${MAX_PULLS} pulls. Next reset in \`${formatTime(timeLeft)}\`.`;
+    if (isInteraction) {
+      await interactionOrMessage.reply({ content: reply, ephemeral: true });
+    } else {
+      await channel.send(reply);
+    }
+    return;
+  }
 
   // perform pull (probability-driven) with 100-pull pity and level sampling
   // determine current position in 100-pull pity cycle (1..100)
